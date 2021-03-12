@@ -460,7 +460,7 @@ class Catcher with ReportModeAction {
       DateTime.now(),
       _deviceParameters,
       _applicationParameters,
-      _currentConfig.customParameters,
+      _currentConfig.customParameters(),
       errorDetails,
       _getPlatformType(),
     );

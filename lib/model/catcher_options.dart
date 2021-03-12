@@ -5,6 +5,12 @@ import 'package:catcher/model/localization_options.dart';
 import 'package:catcher/model/report_handler.dart';
 import 'package:catcher/model/report_mode.dart';
 
+typedef CustomParameterFn = Map<String, dynamic> Function();
+
+Map<String, dynamic> defaultCustFn() {
+  return Map();
+}
+
 class CatcherOptions {
   /// Handlers that should be used
   final List<ReportHandler> handlers;
@@ -27,7 +33,7 @@ class CatcherOptions {
   final Map<String, ReportHandler> explicitExceptionHandlersMap;
 
   /// Custom parameters which will be used in report handler
-  final Map<String, dynamic> customParameters;
+  final CustomParameterFn customParameters;
 
   ///Should catcher handle silent errors
   final bool handleSilentError;
@@ -37,7 +43,7 @@ class CatcherOptions {
     this.reportMode,
     this.handlers, {
     this.handlerTimeout = 5000,
-    this.customParameters = const <String, dynamic>{},
+    this.customParameters = defaultCustFn,
     this.localizationOptions = const [],
     this.explicitExceptionReportModesMap = const {},
     this.explicitExceptionHandlersMap = const {},
@@ -49,7 +55,7 @@ class CatcherOptions {
       : handlers = [ConsoleHandler()],
         reportMode = DialogReportMode(),
         handlerTimeout = 5000,
-        customParameters = <String, dynamic>{},
+        customParameters = defaultCustFn,
         localizationOptions = [],
         explicitExceptionReportModesMap = {},
         explicitExceptionHandlersMap = {},
@@ -60,7 +66,7 @@ class CatcherOptions {
       : handlers = [ConsoleHandler()],
         reportMode = SilentReportMode(),
         handlerTimeout = 10000,
-        customParameters = <String, dynamic>{},
+        customParameters = defaultCustFn,
         localizationOptions = [],
         explicitExceptionReportModesMap = {},
         explicitExceptionHandlersMap = {},
@@ -71,7 +77,7 @@ class CatcherOptions {
       : handlers = [ConsoleHandler()],
         reportMode = SilentReportMode(),
         handlerTimeout = 10000,
-        customParameters = <String, dynamic>{},
+        customParameters = defaultCustFn,
         localizationOptions = [],
         explicitExceptionReportModesMap = {},
         explicitExceptionHandlersMap = {},
