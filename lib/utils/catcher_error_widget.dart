@@ -14,7 +14,7 @@ class CatcherErrorWidget extends StatelessWidget {
     required this.title,
     required this.description,
     required this.maxWidthForSmallMode,
-  })   : assert(maxWidthForSmallMode > 0),
+  })  : assert(maxWidthForSmallMode > 0),
         super(key: key);
 
   @override
@@ -44,21 +44,23 @@ class CatcherErrorWidget extends StatelessWidget {
     return Container(
       margin: const EdgeInsets.all(20),
       child: Center(
-        child: ListView(children: [
-          _buildIcon(),
-          Text(
-            title,
-            style: const TextStyle(color: Colors.black, fontSize: 25),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 10),
-          Text(
-            _getDescription(),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 10),
-          _buildStackTraceWidget()
-        ]),
+        child: ListView(
+          children: [
+            _buildIcon(),
+            Text(
+              title,
+              style: const TextStyle(color: Colors.black, fontSize: 25),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 10),
+            Text(
+              _getDescription(),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 10),
+            _buildStackTraceWidget()
+          ],
+        ),
       ),
     );
   }
@@ -73,14 +75,18 @@ class CatcherErrorWidget extends StatelessWidget {
 
   Widget _buildStackTraceWidget() {
     if (showStacktrace) {
-      final List<String> stackTrace = details!.stack.toString().split("\n");
+      final List<String> items = [];
+      if (details != null) {
+        items.add(details!.exception.toString());
+        items.addAll(details!.stack.toString().split("\n"));
+      }
       return ListView.builder(
         padding: const EdgeInsets.all(8.0),
         shrinkWrap: true,
         physics: const ClampingScrollPhysics(),
-        itemCount: stackTrace.length,
+        itemCount: items.length,
         itemBuilder: (BuildContext context, int index) {
-          final String line = stackTrace[index];
+          final String line = items[index];
           if (line.isNotEmpty == true) {
             return Text(line);
           } else {

@@ -20,7 +20,7 @@ Catcher supports Android, iOS, Web, Linux, Windows and MacOS platforms.
 Add this line to your **pubspec.yaml**:
 ```yaml
 dependencies:
-  catcher: ^0.6.0
+  catcher: ^0.6.9
 ```
 
 Then run this command:
@@ -58,6 +58,7 @@ import 'package:catcher/catcher.dart';
 * [Sentry Handler](#sentry-handler)
 * [Slack Handler](#slack-handler)
 * [Discord Handler](#discord-handler)
+* [Snackbar Handler](#snackbar-handler)
 * [Crashlytics Handler](#crashlytics-handler)
 
 [Test Exception](#test-exception)  
@@ -66,6 +67,8 @@ import 'package:catcher/catcher.dart';
 [Error widget](#error-widget)  
 [Current config](#current-config)  
 [Update config](#update-config)  
+[Screenshots](#screenshots) 
+
 ## Platform support
 To check which features of Catcher are available in given platform visit this page: [Platform support](https://github.com/jhomlala/catcher/blob/master/platform_support.md)
 
@@ -262,19 +265,22 @@ main() {
   ]);
   CatcherOptions profileOptions = CatcherOptions(
     NotificationReportMode(), [ConsoleHandler(), ToastHandler()],
-    handlerTimeout: 10000, customParameters: {"example": "example_parameter"},);
+    handlerTimeout: 10000, customParameters: {"example"c: "example_parameter"},);
   Catcher(rootWidget: MyApp(), debugConfig: debugOptions, releaseConfig: releaseOptions, profileConfig: profileOptions, enableLogger: false, navigatorKey: navigatorKey);
 }
 ```
 CatcherOptions parameters:
-handlers - list of handlers, which will process report, see handlers to get more information
-handlerTimeout - timeout in milliseconds, this parameter describes max time of handling report by handler
-reportMode - describes how error report will be shown to user, see report modes to get more information
-localizationOptions - translations used by report modes nad report handlers
-explicitExceptionReportModesMap - explicit report modes map which will be used to trigger specific report mode for specific error
-explicitExceptionHandlersMap - Explicit report handler map which will be used to trigger specific report report handler for specific error
-customParameters - map of additional parameters that will be included in report (for example user id or user name)
-handleSilentError - should handle silent errors reported, see FlutterErrorDetails.silent for more details
+handlers - list of handlers, which will process report, see handlers to get more information.   
+handlerTimeout - timeout in milliseconds, this parameter describes max time of handling report by handler.   
+reportMode - describes how error report will be shown to user, see report modes to get more information.   
+localizationOptions - translations used by report modes nad report handlers.   
+explicitExceptionReportModesMap - explicit report modes map which will be used to trigger specific report mode for specific error.   
+explicitExceptionHandlersMap - Explicit report handler map which will be used to trigger specific report report handler for specific error.   
+customParameters - map of additional parameters that will be included in report (for example user id or user name).   
+handleSilentError - should handle silent errors reported, see FlutterErrorDetails.silent for more details.   
+screenshotsPath - path where screenshots will be saved.   
+excludedParameters - parameters which will be excluded from report.   
+filterFunction - function used to filter errors which shouldn't be handled.   
 
 
 ### Report catched exception
@@ -529,7 +535,9 @@ ConsoleHandler(
           enableApplicationParameters: true,
           enableDeviceParameters: true,
           enableCustomParameters: true,
-          enableStackTrace: true)
+          enableStackTrace: true,
+          handleWhenRejected: false
+          )
 
 ```
 
@@ -592,6 +600,10 @@ I/flutter ( 5073): #8      PointerRouter._dispatch (package:flutter/src/gestures
 I/flutter ( 5073): #9      PointerRouter.route (package:flutter/src/gestures/pointer_router.dart:101:11)
 I/flutter ( 5073): #10     _WidgetsFlutterBinding&BindingBase&GestureBinding.handleEvent (package:flutter
 ```
+
+* handleWhenRejected - should report be handled even if user rejects it
+
+
 #### Email Manual Handler
 Email manual handler can be used to send email manually by user. It opens default email application with prepared email.
 
@@ -703,7 +715,8 @@ All parameters list:
 * enableApplicationParameters (optional) - please look in console handler description  
 * enableStackTrace (optional) - please look in console handler description  
 * enableCustomParameters (optional) - please look in console handler description  
-* printLogs (optional) - enable/disable debug logs  
+* printLogs (optional) - enable/disable debug logs
+* handleWhenRejected - please look in console handler description
 
 Example of logging to file in external directory: https://github.com/jhomlala/catcher/blob/master/example/lib/file_example.dart
 
@@ -723,6 +736,7 @@ All parameters list:
 * textColor (optional) - text color of toast
 * fontSize (optional) - text size
 * customMessage (optional) - custom message for toast, if not set then "Error occured: error" will be displayed.
+* handleWhenRejected - please look in console handler description
 
 <p align="center">
 <img src="https://raw.githubusercontent.com/jhomlala/catcher/master/screenshots/5.png" width="250px">
@@ -788,6 +802,7 @@ All parameters list:
 * enableCustomParameters (optional) - please look in console handler description
 * enableStackTrace (optional) - please look in console handler description
 * printLogs (optional) - enable/disable debug logs
+* customMessageBuilder - provide custom message
 
 #### Discord Handler
 Discord Handler allows to send messages to your Discord workspace. You need to register webhook in your server to make this handler
@@ -816,6 +831,60 @@ All parameters list:
 * enableCustomParameters (optional) - please look in console handler description
 * enableStackTrace (optional) - please look in console handler description
 * printLogs (optional) - enable/disable debug logs
+* customMessageBuilder - provide custom message
+
+
+### Snackbar Handler
+Snackbar handler allows to show customized snackbar message.
+
+```dart
+void main() {
+  CatcherOptions debugOptions = CatcherOptions(DialogReportMode(), [
+    SnackbarHandler(
+      Duration(seconds: 5),
+      backgroundColor: Colors.green,
+      elevation: 2,
+      margin: EdgeInsets.all(16),
+      padding: EdgeInsets.all(16),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      behavior: SnackBarBehavior.floating,
+      action: SnackBarAction(
+          label: "Button",
+          onPressed: () {
+            print("Click!");
+          }),
+      textStyle: TextStyle(
+        color: Colors.white,
+        fontSize: 16,
+      ),
+    ),
+  ]);
+
+  Catcher(
+    runAppFunction: () {
+      runApp(MyApp());
+    },
+    debugConfig: debugOptions,
+  );
+}
+```
+
+All parameters list:
+* duration - See [SnackBar] in Flutter docs for details.
+* backgroundColor - See [SnackBar] in Flutter docs for details.
+* elevation - See [SnackBar] in Flutter docs for details.
+* margin - See [SnackBar] in Flutter docs for details.
+* padding - See [SnackBar] in Flutter docs for details.
+* width - See [SnackBar] in Flutter docs for details.
+* shape - See [SnackBar] in Flutter docs for details.
+* behavior - See [SnackBar] in Flutter docs for details.
+* action - See [SnackBar] in Flutter docs for details.
+* animation - See [SnackBar] in Flutter docs for details.
+* onVisible - See [SnackBar] in Flutter docs for details.
+* customMessage - Custom message which can be displayed instead default one.
+* textStyle - Custom text style for text displayed within snackbar.
+* printLogs - Enable additional logs printing
+
 
 #### Crashlytics Handler
 Crashlytics handler has been removed from core package. You can re-enable it in your project by using custom report mode presented in crashlytics_example in example project.
@@ -926,3 +995,37 @@ catcher.updateConfig(
      ),
    );
 ```
+
+### Screenshots
+Catcher can create screenshots automatically and include them in report handlers. To add screenshot
+support in your app, simply wrap your root widget with CatcherScreenshot widget:
+```dart
+MaterialApp(
+      navigatorKey: Catcher.navigatorKey,
+      home: CatcherScreenshot(
+        catcher: Catcher.getInstance(),
+        child: Scaffold(
+          appBar: AppBar(
+            title: const Text('Plugin example app'),
+          ),
+          body: ChildWidget(),
+        ),
+      ),
+    );
+```
+Also you need to provide directory path, where Catcher will store screenshot files: 
+
+```dart
+  CatcherOptions debugOptions = CatcherOptions(
+    DialogReportMode(),
+    [
+      ToastHandler(),
+    ],
+    screenshotsPath: path,
+  );
+```
+Screenshots will work for all platforms, except Web. Screenshots will work in:
+* Http Handler
+* Email auto handler
+* Email manual handler
+* Discord

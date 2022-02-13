@@ -39,6 +39,7 @@ class PageReportMode extends ReportMode {
   List<PlatformType> getSupportedPlatforms() => [
         PlatformType.android,
         PlatformType.iOS,
+        PlatformType.web,
         PlatformType.linux,
         PlatformType.macOS,
         PlatformType.windows,
@@ -64,10 +65,16 @@ class PageWidget extends StatefulWidget {
 class PageWidgetState extends State<PageWidget> {
   @override
   Widget build(BuildContext context) {
-    return Builder(
-      builder: (context) => CatcherUtils.isCupertinoAppAncestor(context)
-          ? _buildCupertinoPage()
-          : _buildMaterialPage(),
+    return WillPopScope(
+      onWillPop: () async {
+        widget.pageReportMode.onActionRejected(widget.report);
+        return true;
+      },
+      child: Builder(
+        builder: (context) => CatcherUtils.isCupertinoAppAncestor(context)
+            ? _buildCupertinoPage()
+            : _buildMaterialPage(),
+      ),
     );
   }
 
@@ -125,13 +132,17 @@ class PageWidgetState extends State<PageWidget> {
             children: <Widget>[
               TextButton(
                 onPressed: () => _onAcceptClicked(),
-                child: Text(widget
-                    .pageReportMode.localizationOptions.pageReportModeAccept),
+                child: Text(
+                  widget
+                      .pageReportMode.localizationOptions.pageReportModeAccept,
+                ),
               ),
               TextButton(
                 onPressed: () => _onCancelClicked(),
-                child: Text(widget
-                    .pageReportMode.localizationOptions.pageReportModeCancel),
+                child: Text(
+                  widget
+                      .pageReportMode.localizationOptions.pageReportModeCancel,
+                ),
               ),
             ],
           )
@@ -149,7 +160,17 @@ class PageWidgetState extends State<PageWidget> {
 
   Widget _getStackTraceWidget() {
     if (widget.pageReportMode.showStackTrace) {
-      final items = widget.report.stackTrace.toString().split("\n");
+      String error = "";
+      if (widget.report.error != null) {
+        error = widget.report.error.toString();
+      } else if (widget.report.errorDetails != null) {
+        error = widget.report.errorDetails.toString();
+      }
+
+      final List<String> items = [
+        error,
+        ...widget.report.stackTrace.toString().split("\n"),
+      ];
       return SizedBox(
         height: 300.0,
         child: ListView.builder(

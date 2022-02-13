@@ -1,10 +1,12 @@
 library catcher;
 
 export 'package:catcher/core/catcher.dart';
+export 'package:catcher/core/catcher_screenshot.dart';
 export "package:catcher/handlers/console_handler.dart";
 export "package:catcher/handlers/file_handler.dart";
 export "package:catcher/handlers/http_handler.dart";
 export "package:catcher/handlers/slack_handler.dart";
+export "package:catcher/handlers/snackbar_handler.dart";
 export 'package:catcher/mode/dialog_report_mode.dart';
 export 'package:catcher/mode/page_report_mode.dart';
 export 'package:catcher/mode/report_mode_action_confirmed.dart';
@@ -17,9 +19,4 @@ export 'package:catcher/model/report_handler.dart';
 export 'package:catcher/model/report_mode.dart';
 export 'package:catcher/model/toast_handler_gravity.dart';
 export 'package:catcher/model/toast_handler_length.dart';
-
-/// TODO:
-/// Just a dummy code to fix pubdev score
-/// This should be removed later
-@Deprecated("Don't use this!")
-void dummyCode() {}
+export 'package:catcher/utils/catcher_logger.dart';

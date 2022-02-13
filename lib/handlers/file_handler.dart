@@ -4,7 +4,7 @@ import 'dart:io';
 import 'package:catcher/model/platform_type.dart';
 import 'package:catcher/model/report.dart';
 import 'package:catcher/model/report_handler.dart';
-import 'package:logging/logging.dart';
+import 'package:flutter/material.dart';
 
 class FileHandler extends ReportHandler {
   final File file;
@@ -13,8 +13,8 @@ class FileHandler extends ReportHandler {
   final bool enableStackTrace;
   final bool enableCustomParameters;
   final bool printLogs;
+  final bool handleWhenRejected;
 
-  final Logger _logger = Logger("FileHandler");
   late IOSink _sink;
   bool _fileValidated = false;
   bool _fileValidationResult = false;
@@ -26,10 +26,11 @@ class FileHandler extends ReportHandler {
     this.enableStackTrace = true,
     this.enableCustomParameters = true,
     this.printLogs = false,
+    this.handleWhenRejected = false,
   });
 
   @override
-  Future<bool> handle(Report report) async {
+  Future<bool> handle(Report report, BuildContext? context) async {
     try {
       if (!_fileValidated) {
         _fileValidationResult = await _checkFile();
@@ -65,7 +66,7 @@ class FileHandler extends ReportHandler {
       await sink.close();
       return true;
     } catch (exc, stackTrace) {
-      _printLog("Exception occured: $exc stack: $stackTrace");
+      _printLog("Exception occurred: $exc stack: $stackTrace");
       return false;
     }
   }
@@ -88,7 +89,8 @@ class FileHandler extends ReportHandler {
   void _writeReportToFile(Report report) async {
     _printLog("Writing report to file");
     _writeLineToFile(
-        "============================== CATCHER LOG ==============================");
+      "============================== CATCHER LOG ==============================",
+    );
     _writeLineToFile("Crash occurred on ${report.dateTime}");
     _writeLineToFile("");
     if (enableDeviceParameters) {
@@ -110,7 +112,8 @@ class FileHandler extends ReportHandler {
       _logCustomParametersFormatted(report.customParameters);
     }
     _writeLineToFile(
-        "======================================================================");
+      "======================================================================",
+    );
   }
 
   void _logDeviceParametersFormatted(Map<String, dynamic> deviceParameters) {
@@ -121,7 +124,8 @@ class FileHandler extends ReportHandler {
   }
 
   void _logApplicationParametersFormatted(
-      Map<String, dynamic> applicationParameters) {
+    Map<String, dynamic> applicationParameters,
+  ) {
     _writeLineToFile("------- APP INFO -------");
     for (final entry in applicationParameters.entries) {
       _writeLineToFile("${entry.key}: ${entry.value}");
@@ -137,7 +141,7 @@ class FileHandler extends ReportHandler {
 
   void _printLog(String log) {
     if (printLogs) {
-      _logger.info(log);
+      logger.info(log);
     }
   }
 
@@ -149,4 +153,9 @@ class FileHandler extends ReportHandler {
         PlatformType.macOS,
         PlatformType.windows,
       ];
+
+  @override
+  bool shouldHandleWhenRejected() {
+    return handleWhenRejected;
+  }
 }

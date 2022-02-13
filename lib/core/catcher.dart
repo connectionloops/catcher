@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:isolate';
 
 import 'package:catcher/core/application_profile_manager.dart';
+import 'package:catcher/core/catcher_screenshot_manager.dart';
 import 'package:catcher/mode/report_mode_action_confirmed.dart';
 import 'package:catcher/model/application_profile.dart';
 import 'package:catcher/model/catcher_options.dart';
@@ -11,11 +13,11 @@ import 'package:catcher/model/report.dart';
 import 'package:catcher/model/report_handler.dart';
 import 'package:catcher/model/report_mode.dart';
 import 'package:catcher/utils/catcher_error_widget.dart';
+import 'package:catcher/utils/catcher_logger.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:logging/logging.dart';
-import 'package:package_info/package_info.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 class Catcher with ReportModeAction {
   static late Catcher _instance;
@@ -42,11 +44,13 @@ class Catcher with ReportModeAction {
   /// Should catcher run WidgetsFlutterBinding.ensureInitialized() during initialization.
   final bool ensureInitialized;
 
-  final Logger _logger = Logger("Catcher");
   late CatcherOptions _currentConfig;
+  late CatcherLogger _logger;
+  late CatcherScreenshotManager screenshotManager;
   final Map<String, dynamic> _deviceParameters = <String, dynamic>{};
   final Map<String, dynamic> _applicationParameters = <String, dynamic>{};
   final List<Report> _cachedReports = [];
+  final Map<DateTime, String> _reportsOcurrenceMap = {};
   LocalizationOptions? _localizationOptions;
 
   /// Instance of navigator key
@@ -64,26 +68,30 @@ class Catcher with ReportModeAction {
     this.enableLogger = true,
     this.ensureInitialized = false,
     GlobalKey<NavigatorState>? navigatorKey,
-  }) : assert(rootWidget != null || runAppFunction != null,
-            "You need to provide rootWidget or runAppFunction") {
+  }) : assert(
+          rootWidget != null || runAppFunction != null,
+          "You need to provide rootWidget or runAppFunction",
+        ) {
     _configure(navigatorKey);
   }
 
   void _configure(GlobalKey<NavigatorState>? navigatorKey) {
     _instance = this;
     _configureNavigatorKey(navigatorKey);
-    _configureLogger();
     _setupCurrentConfig();
+    _configureLogger();
     _setupErrorHooks();
     _setupReportModeActionInReportMode();
+    _setupScreenshotManager();
 
     _loadDeviceInfo();
     _loadApplicationInfo();
 
     if (_currentConfig.handlers.isEmpty) {
-      _logger
-          .warning("Handlers list is empty. Configure at least one handler to "
-              "process error reports.");
+      _logger.warning(
+        "Handlers list is empty. Configure at least one handler to "
+        "process error reports.",
+      );
     } else {
       _logger.fine("Catcher configured successfully.");
     }
@@ -101,7 +109,6 @@ class Catcher with ReportModeAction {
     switch (ApplicationProfileManager.getApplicationProfile()) {
       case ApplicationProfile.release:
         {
-          _logger.fine("Using release config");
           if (releaseConfig != null) {
             _currentConfig = releaseConfig!;
           } else {
@@ -111,7 +118,6 @@ class Catcher with ReportModeAction {
         }
       case ApplicationProfile.debug:
         {
-          _logger.fine("Using debug config");
           if (debugConfig != null) {
             _currentConfig = debugConfig!;
           } else {
@@ -121,7 +127,6 @@ class Catcher with ReportModeAction {
         }
       case ApplicationProfile.profile:
         {
-          _logger.fine("Using profile config");
           if (profileConfig != null) {
             _currentConfig = profileConfig!;
           } else {
@@ -149,6 +154,8 @@ class Catcher with ReportModeAction {
     }
     _setupCurrentConfig();
     _setupReportModeActionInReportMode();
+    _setupScreenshotManager();
+    _configureLogger();
     _localizationOptions = null;
   }
 
@@ -183,13 +190,15 @@ class Catcher with ReportModeAction {
 
     ///Web doesn't have Isolate error listener support
     if (!ApplicationProfileManager.isWeb()) {
-      Isolate.current.addErrorListener(RawReceivePort((dynamic pair) async {
-        final isolateError = pair as List<dynamic>;
-        _reportError(
-          isolateError.first.toString(),
-          isolateError.last.toString(),
-        );
-      }).sendPort);
+      Isolate.current.addErrorListener(
+        RawReceivePort((dynamic pair) async {
+          final isolateError = pair as List<dynamic>;
+          _reportError(
+            isolateError.first.toString(),
+            isolateError.last.toString(),
+          );
+        }).sendPort,
+      );
     }
 
     if (rootWidget != null) {
@@ -217,16 +226,18 @@ class Catcher with ReportModeAction {
   }
 
   void _configureLogger() {
-    if (enableLogger) {
-      Logger.root.level = Level.ALL;
-      Logger.root.onRecord.listen(
-        (LogRecord rec) {
-          // ignore: avoid_print
-          print(
-              '[${rec.time} | ${rec.loggerName} | ${rec.level.name}] ${rec.message}');
-        },
-      );
+    if (_currentConfig.logger != null) {
+      _logger = _currentConfig.logger!;
+    } else {
+      _logger = CatcherLogger();
     }
+    if (enableLogger) {
+      _logger.setup();
+    }
+
+    _currentConfig.handlers.forEach((handler) {
+      handler.logger = _logger;
+    });
   }
 
   void _loadDeviceInfo() {
@@ -234,140 +245,175 @@ class Catcher with ReportModeAction {
     if (ApplicationProfileManager.isWeb()) {
       deviceInfo.webBrowserInfo.then((webBrowserInfo) {
         _loadWebParameters(webBrowserInfo);
+        _removeExcludedParameters();
       });
     } else if (ApplicationProfileManager.isLinux()) {
       deviceInfo.linuxInfo.then((linuxDeviceInfo) {
         _loadLinuxParameters(linuxDeviceInfo);
+        _removeExcludedParameters();
       });
     } else if (ApplicationProfileManager.isWindows()) {
       deviceInfo.windowsInfo.then((windowsInfo) {
         _loadWindowsParameters(windowsInfo);
+        _removeExcludedParameters();
       });
     } else if (ApplicationProfileManager.isMacOS()) {
       deviceInfo.macOsInfo.then((macOsDeviceInfo) {
         _loadMacOSParameters(macOsDeviceInfo);
+        _removeExcludedParameters();
       });
     } else if (ApplicationProfileManager.isAndroid()) {
       deviceInfo.androidInfo.then((androidInfo) {
         _loadAndroidParameters(androidInfo);
+        _removeExcludedParameters();
       });
     } else if (ApplicationProfileManager.isIos()) {
       deviceInfo.iosInfo.then((iosInfo) {
         _loadIosParameters(iosInfo);
+        _removeExcludedParameters();
       });
     } else {
       _logger.info("Couldn't load device info for unsupported device type.");
     }
   }
 
+  ///Remove excluded parameters from device parameters.
+  void _removeExcludedParameters() {
+    _currentConfig.excludedParameters.forEach((parameter) {
+      _deviceParameters.remove(parameter);
+    });
+  }
+
   void _loadLinuxParameters(LinuxDeviceInfo linuxDeviceInfo) {
-    _deviceParameters["name"] = linuxDeviceInfo.name;
-    _deviceParameters["version"] = linuxDeviceInfo.version;
-    _deviceParameters["id"] = linuxDeviceInfo.id;
-    _deviceParameters["idLike"] = linuxDeviceInfo.idLike;
-    _deviceParameters["versionCodename"] = linuxDeviceInfo.versionCodename;
-    _deviceParameters["versionId"] = linuxDeviceInfo.versionId;
-    _deviceParameters["prettyName"] = linuxDeviceInfo.prettyName;
-    _deviceParameters["buildId"] = linuxDeviceInfo.buildId;
-    _deviceParameters["variant"] = linuxDeviceInfo.variant;
-    _deviceParameters["variantId"] = linuxDeviceInfo.variantId;
-    _deviceParameters["machineId"] = linuxDeviceInfo.machineId;
+    try {
+      _deviceParameters["name"] = linuxDeviceInfo.name;
+      _deviceParameters["version"] = linuxDeviceInfo.version;
+      _deviceParameters["id"] = linuxDeviceInfo.id;
+      _deviceParameters["idLike"] = linuxDeviceInfo.idLike;
+      _deviceParameters["versionCodename"] = linuxDeviceInfo.versionCodename;
+      _deviceParameters["versionId"] = linuxDeviceInfo.versionId;
+      _deviceParameters["prettyName"] = linuxDeviceInfo.prettyName;
+      _deviceParameters["buildId"] = linuxDeviceInfo.buildId;
+      _deviceParameters["variant"] = linuxDeviceInfo.variant;
+      _deviceParameters["variantId"] = linuxDeviceInfo.variantId;
+      _deviceParameters["machineId"] = linuxDeviceInfo.machineId;
+    } catch (exception) {
+      _logger.warning("Load Linux parameters failed: $exception");
+    }
   }
 
   void _loadMacOSParameters(MacOsDeviceInfo macOsDeviceInfo) {
-    _deviceParameters["computerName"] = macOsDeviceInfo.computerName;
-    _deviceParameters["hostName"] = macOsDeviceInfo.hostName;
-    _deviceParameters["arch"] = macOsDeviceInfo.arch;
-    _deviceParameters["model"] = macOsDeviceInfo.model;
-    _deviceParameters["kernelVersion"] = macOsDeviceInfo.kernelVersion;
-    _deviceParameters["osRelease"] = macOsDeviceInfo.osRelease;
-    _deviceParameters["activeCPUs"] = macOsDeviceInfo.activeCPUs;
-    _deviceParameters["memorySize"] = macOsDeviceInfo.memorySize;
-    _deviceParameters["cpuFrequency"] = macOsDeviceInfo.cpuFrequency;
+    try {
+      _deviceParameters["computerName"] = macOsDeviceInfo.computerName;
+      _deviceParameters["hostName"] = macOsDeviceInfo.hostName;
+      _deviceParameters["arch"] = macOsDeviceInfo.arch;
+      _deviceParameters["model"] = macOsDeviceInfo.model;
+      _deviceParameters["kernelVersion"] = macOsDeviceInfo.kernelVersion;
+      _deviceParameters["osRelease"] = macOsDeviceInfo.osRelease;
+      _deviceParameters["activeCPUs"] = macOsDeviceInfo.activeCPUs;
+      _deviceParameters["memorySize"] = macOsDeviceInfo.memorySize;
+      _deviceParameters["cpuFrequency"] = macOsDeviceInfo.cpuFrequency;
+    } catch (exception) {
+      _logger.warning("Load MacOS parameters failed: $exception");
+    }
   }
 
   void _loadWindowsParameters(WindowsDeviceInfo windowsDeviceInfo) {
-    _deviceParameters["computerName"] = windowsDeviceInfo.computerName;
-    _deviceParameters["numberOfCores"] = windowsDeviceInfo.numberOfCores;
-    _deviceParameters["systemMemoryInMegabytes"] =
-        windowsDeviceInfo.systemMemoryInMegabytes;
+    try {
+      _deviceParameters["computerName"] = windowsDeviceInfo.computerName;
+      _deviceParameters["numberOfCores"] = windowsDeviceInfo.numberOfCores;
+      _deviceParameters["systemMemoryInMegabytes"] =
+          windowsDeviceInfo.systemMemoryInMegabytes;
+    } catch (exception) {
+      _logger.warning("Load Windows parameters failed: $exception");
+    }
   }
 
   void _loadWebParameters(WebBrowserInfo webBrowserInfo) async {
-    _deviceParameters["language"] = webBrowserInfo.language;
-    _deviceParameters["appCodeName"] = webBrowserInfo.appCodeName;
-    _deviceParameters["appName"] = webBrowserInfo.appName;
-    _deviceParameters["appVersion"] = webBrowserInfo.appVersion;
-    _deviceParameters["browserName"] = webBrowserInfo.browserName;
-    _deviceParameters["deviceMemory"] = webBrowserInfo.deviceMemory;
-    _deviceParameters["hardwareConcurrency"] =
-        webBrowserInfo.hardwareConcurrency;
-    _deviceParameters["languages"] = webBrowserInfo.languages;
-    _deviceParameters["maxTouchPoints"] = webBrowserInfo.maxTouchPoints;
-    _deviceParameters["platform"] = webBrowserInfo.platform;
-    _deviceParameters["product"] = webBrowserInfo.product;
-    _deviceParameters["productSub"] = webBrowserInfo.productSub;
-    _deviceParameters["userAgent"] = webBrowserInfo.userAgent;
-    _deviceParameters["vendor"] = webBrowserInfo.vendor;
-    _deviceParameters["vendorSub"] = webBrowserInfo.vendorSub;
+    try {
+      _deviceParameters["language"] = webBrowserInfo.language;
+      _deviceParameters["appCodeName"] = webBrowserInfo.appCodeName;
+      _deviceParameters["appName"] = webBrowserInfo.appName;
+      _deviceParameters["appVersion"] = webBrowserInfo.appVersion;
+      _deviceParameters["browserName"] = webBrowserInfo.browserName.toString();
+      _deviceParameters["deviceMemory"] = webBrowserInfo.deviceMemory;
+      _deviceParameters["hardwareConcurrency"] =
+          webBrowserInfo.hardwareConcurrency;
+      _deviceParameters["languages"] = webBrowserInfo.languages;
+      _deviceParameters["maxTouchPoints"] = webBrowserInfo.maxTouchPoints;
+      _deviceParameters["platform"] = webBrowserInfo.platform;
+      _deviceParameters["product"] = webBrowserInfo.product;
+      _deviceParameters["productSub"] = webBrowserInfo.productSub;
+      _deviceParameters["userAgent"] = webBrowserInfo.userAgent;
+      _deviceParameters["vendor"] = webBrowserInfo.vendor;
+      _deviceParameters["vendorSub"] = webBrowserInfo.vendorSub;
+    } catch (exception) {
+      _logger.warning("Load Web parameters failed: $exception");
+    }
   }
 
   void _loadAndroidParameters(AndroidDeviceInfo androidDeviceInfo) {
-    _deviceParameters["id"] = androidDeviceInfo.id;
-    _deviceParameters["androidId"] = androidDeviceInfo.androidId;
-    _deviceParameters["board"] = androidDeviceInfo.board;
-    _deviceParameters["bootloader"] = androidDeviceInfo.bootloader;
-    _deviceParameters["brand"] = androidDeviceInfo.brand;
-    _deviceParameters["device"] = androidDeviceInfo.device;
-    _deviceParameters["display"] = androidDeviceInfo.display;
-    _deviceParameters["fingerprint"] = androidDeviceInfo.fingerprint;
-    _deviceParameters["hardware"] = androidDeviceInfo.hardware;
-    _deviceParameters["host"] = androidDeviceInfo.host;
-    _deviceParameters["isPhysicalDevice"] = androidDeviceInfo.isPhysicalDevice;
-    _deviceParameters["manufacturer"] = androidDeviceInfo.manufacturer;
-    _deviceParameters["model"] = androidDeviceInfo.model;
-    _deviceParameters["product"] = androidDeviceInfo.product;
-    _deviceParameters["tags"] = androidDeviceInfo.tags;
-    _deviceParameters["type"] = androidDeviceInfo.type;
-    _deviceParameters["versionBaseOs"] = androidDeviceInfo.version.baseOS;
-    _deviceParameters["versionCodename"] = androidDeviceInfo.version.codename;
-    _deviceParameters["versionIncremental"] =
-        androidDeviceInfo.version.incremental;
-    _deviceParameters["versionPreviewSdk"] =
-        androidDeviceInfo.version.previewSdkInt;
-    _deviceParameters["versionRelease"] = androidDeviceInfo.version.release;
-    _deviceParameters["versionSdk"] = androidDeviceInfo.version.sdkInt;
-    _deviceParameters["versionSecurityPatch"] =
-        androidDeviceInfo.version.securityPatch;
+    try {
+      _deviceParameters["id"] = androidDeviceInfo.id;
+      _deviceParameters["androidId"] = androidDeviceInfo.androidId;
+      _deviceParameters["board"] = androidDeviceInfo.board;
+      _deviceParameters["bootloader"] = androidDeviceInfo.bootloader;
+      _deviceParameters["brand"] = androidDeviceInfo.brand;
+      _deviceParameters["device"] = androidDeviceInfo.device;
+      _deviceParameters["display"] = androidDeviceInfo.display;
+      _deviceParameters["fingerprint"] = androidDeviceInfo.fingerprint;
+      _deviceParameters["hardware"] = androidDeviceInfo.hardware;
+      _deviceParameters["host"] = androidDeviceInfo.host;
+      _deviceParameters["isPhysicalDevice"] =
+          androidDeviceInfo.isPhysicalDevice;
+      _deviceParameters["manufacturer"] = androidDeviceInfo.manufacturer;
+      _deviceParameters["model"] = androidDeviceInfo.model;
+      _deviceParameters["product"] = androidDeviceInfo.product;
+      _deviceParameters["tags"] = androidDeviceInfo.tags;
+      _deviceParameters["type"] = androidDeviceInfo.type;
+      _deviceParameters["versionBaseOs"] = androidDeviceInfo.version.baseOS;
+      _deviceParameters["versionCodename"] = androidDeviceInfo.version.codename;
+      _deviceParameters["versionIncremental"] =
+          androidDeviceInfo.version.incremental;
+      _deviceParameters["versionPreviewSdk"] =
+          androidDeviceInfo.version.previewSdkInt;
+      _deviceParameters["versionRelease"] = androidDeviceInfo.version.release;
+      _deviceParameters["versionSdk"] = androidDeviceInfo.version.sdkInt;
+      _deviceParameters["versionSecurityPatch"] =
+          androidDeviceInfo.version.securityPatch;
+    } catch (exception) {
+      _logger.warning("Load Android parameters failed: $exception");
+    }
   }
 
   void _loadIosParameters(IosDeviceInfo iosInfo) {
-    _deviceParameters["model"] = iosInfo.model;
-    _deviceParameters["isPhysicalDevice"] = iosInfo.isPhysicalDevice;
-    _deviceParameters["name"] = iosInfo.name;
-    _deviceParameters["identifierForVendor"] = iosInfo.identifierForVendor;
-    _deviceParameters["localizedModel"] = iosInfo.localizedModel;
-    _deviceParameters["systemName"] = iosInfo.systemName;
-    _deviceParameters["utsnameVersion"] = iosInfo.utsname.version;
-    _deviceParameters["utsnameRelease"] = iosInfo.utsname.release;
-    _deviceParameters["utsnameMachine"] = iosInfo.utsname.machine;
-    _deviceParameters["utsnameNodename"] = iosInfo.utsname.nodename;
-    _deviceParameters["utsnameSysname"] = iosInfo.utsname.sysname;
+    try {
+      _deviceParameters["model"] = iosInfo.model;
+      _deviceParameters["isPhysicalDevice"] = iosInfo.isPhysicalDevice;
+      _deviceParameters["name"] = iosInfo.name;
+      _deviceParameters["identifierForVendor"] = iosInfo.identifierForVendor;
+      _deviceParameters["localizedModel"] = iosInfo.localizedModel;
+      _deviceParameters["systemName"] = iosInfo.systemName;
+      _deviceParameters["utsnameVersion"] = iosInfo.utsname.version;
+      _deviceParameters["utsnameRelease"] = iosInfo.utsname.release;
+      _deviceParameters["utsnameMachine"] = iosInfo.utsname.machine;
+      _deviceParameters["utsnameNodename"] = iosInfo.utsname.nodename;
+      _deviceParameters["utsnameSysname"] = iosInfo.utsname.sysname;
+    } catch (exception) {
+      _logger.warning("Load iOS parameters failed: $exception");
+    }
   }
 
   void _loadApplicationInfo() {
     _applicationParameters["environment"] =
         describeEnum(ApplicationProfileManager.getApplicationProfile());
 
-    ///There is no package info web implementation
-    if (!ApplicationProfileManager.isWeb()) {
-      PackageInfo.fromPlatform().then((packageInfo) {
-        _applicationParameters["version"] = packageInfo.version;
-        _applicationParameters["appName"] = packageInfo.appName;
-        _applicationParameters["buildNumber"] = packageInfo.buildNumber;
-        _applicationParameters["packageName"] = packageInfo.packageName;
-      });
-    }
+    PackageInfo.fromPlatform().then((packageInfo) {
+      _applicationParameters["version"] = packageInfo.version;
+      _applicationParameters["appName"] = packageInfo.appName;
+      _applicationParameters["buildNumber"] = packageInfo.buildNumber;
+      _applicationParameters["packageName"] = packageInfo.packageName;
+    });
   }
 
   ///We need to setup localizations lazily because context needed to setup these
@@ -396,7 +442,8 @@ class Catcher with ReportModeAction {
   }
 
   LocalizationOptions _getDefaultLocalizationOptionsForLanguage(
-      String language) {
+    String language,
+  ) {
     switch (language.toLowerCase()) {
       case "en":
         return LocalizationOptions.buildDefaultEnglishOptions();
@@ -422,12 +469,24 @@ class Catcher with ReportModeAction {
         return LocalizationOptions.buildDefaultKoreanOptions();
       case "nl":
         return LocalizationOptions.buildDefaultDutchOptions();
+      case "de":
+        return LocalizationOptions.buildDefaultGermanOptions();
       default:
         return LocalizationOptions.buildDefaultEnglishOptions();
     }
   }
 
-  /// Report checked error (error catched in try-catch block). Catcher will treat
+  ///Setup screenshot manager's screenshots path.
+  void _setupScreenshotManager() {
+    screenshotManager = CatcherScreenshotManager(_logger);
+    final String screenshotsPath = _currentConfig.screenshotsPath;
+    if (!ApplicationProfileManager.isWeb() && screenshotsPath.isEmpty) {
+      _logger.warning("Screenshots path is empty. Screenshots won't work.");
+    }
+    screenshotManager.path = screenshotsPath;
+  }
+
+  /// Report checked error (error caught in try-catch block). Catcher will treat
   /// this as normal exception and pass it to handlers.
   static void reportCheckedError(dynamic error, dynamic stackTrace) {
     dynamic errorValue = error;
@@ -445,13 +504,21 @@ class Catcher with ReportModeAction {
     if (errorDetails?.silent == true &&
         _currentConfig.handleSilentError == false) {
       _logger.info(
-          "Report error skipped for error: $error. HandleSilentError is false.");
+        "Report error skipped for error: $error. HandleSilentError is false.",
+      );
       return;
     }
 
     if (_localizationOptions == null) {
       _logger.info("Setup localization lazily!");
       _setupLocalization();
+    }
+
+    _cleanPastReportsOccurences();
+
+    File? screenshot;
+    if (!ApplicationProfileManager.isWeb()) {
+      screenshot = await screenshotManager.captureAndSave();
     }
 
     final Report report = Report(
@@ -463,8 +530,23 @@ class Catcher with ReportModeAction {
       _currentConfig.customParameters(),
       errorDetails,
       _getPlatformType(),
+      screenshot,
     );
 
+    if (_isReportInReportsOccurencesMap(report)) {
+      _logger.fine(
+        "Error: '$error' has been skipped to due to duplication occurence within ${_currentConfig.reportOccurrenceTimeout} ms.",
+      );
+      return;
+    }
+
+    if (_currentConfig.filterFunction != null &&
+        _currentConfig.filterFunction!(report) == false) {
+      _logger.fine(
+        "Error: '$error' has been filtered from Catcher logs. Report will be skipped.",
+      );
+      return;
+    }
     _cachedReports.add(report);
     ReportMode? reportMode =
         _getReportModeFromExplicitExceptionReportModeMap(error);
@@ -475,16 +557,20 @@ class Catcher with ReportModeAction {
     }
     if (!isReportModeSupportedInPlatform(report, reportMode)) {
       _logger.warning(
-          "$reportMode in not supported for ${describeEnum(report.platformType)} platform");
+        "$reportMode in not supported for ${describeEnum(report.platformType)} platform",
+      );
       return;
     }
+
+    _addReportInReportsOccurencesMap(report);
 
     if (reportMode.isContextRequired()) {
       if (_isContextValid()) {
         reportMode.requestAction(report, _getContext());
       } else {
         _logger.warning(
-            "Couldn't use report mode because you didn't provide navigator key. Add navigator key to use this report mode.");
+          "Couldn't use report mode because you didn't provide navigator key. Add navigator key to use this report mode.",
+        );
       }
     } else {
       reportMode.requestAction(report, null);
@@ -513,7 +599,8 @@ class Catcher with ReportModeAction {
   }
 
   ReportHandler? _getReportHandlerFromExplicitExceptionHandlerMap(
-      dynamic error) {
+    dynamic error,
+  ) {
     final errorName = error != null ? error.toString().toLowerCase() : "";
     ReportHandler? reportHandler;
     _currentConfig.explicitExceptionHandlersMap.forEach((key, value) {
@@ -543,31 +630,47 @@ class Catcher with ReportModeAction {
   void _handleReport(Report report, ReportHandler reportHandler) {
     if (!isReportHandlerSupportedInPlatform(report, reportHandler)) {
       _logger.warning(
-          "$reportHandler in not supported for ${describeEnum(report.platformType)} platform");
+        "$reportHandler in not supported for ${describeEnum(report.platformType)} platform",
+      );
       return;
     }
 
-    reportHandler.handle(report).catchError((dynamic handlerError) {
+    if (reportHandler.isContextRequired() && !_isContextValid()) {
       _logger.warning(
-          "Error occurred in ${reportHandler.toString()}: ${handlerError.toString()}");
+        "Couldn't use report handler because you didn't provide navigator key. Add navigator key to use this report mode.",
+      );
+      return;
+    }
+
+    reportHandler
+        .handle(report, _getContext())
+        .catchError((dynamic handlerError) {
+      _logger.warning(
+        "Error occurred in ${reportHandler.toString()}: ${handlerError.toString()}",
+      );
     }).then((result) {
-      _logger.info("Report result: $result");
+      _logger.info("${report.runtimeType} result: $result");
       if (!result) {
         _logger.warning("${reportHandler.toString()} failed to report error");
       } else {
         _cachedReports.remove(report);
       }
-    }).timeout(Duration(milliseconds: _currentConfig.handlerTimeout),
-        onTimeout: () {
-      _logger.warning(
-          "${reportHandler.toString()} failed to report error because of timeout");
-    });
+    }).timeout(
+      Duration(milliseconds: _currentConfig.handlerTimeout),
+      onTimeout: () {
+        _logger.warning(
+          "${reportHandler.toString()} failed to report error because of timeout",
+        );
+      },
+    );
   }
 
   /// Checks is report handler is supported in given platform. Only supported
   /// report handlers in given platform can be used.
   bool isReportHandlerSupportedInPlatform(
-      Report report, ReportHandler reportHandler) {
+    Report report,
+    ReportHandler reportHandler,
+  ) {
     if (reportHandler.getSupportedPlatforms().isEmpty == true) {
       return false;
     }
@@ -576,6 +679,12 @@ class Catcher with ReportModeAction {
 
   @override
   void onActionRejected(Report report) {
+    _currentConfig.handlers
+        .where((handler) => handler.shouldHandleWhenRejected())
+        .forEach((handler) {
+      _handleReport(report, handler);
+    });
+
     _cachedReports.remove(report);
   }
 
@@ -598,13 +707,14 @@ class Catcher with ReportModeAction {
   }
 
   /// Add default error widget which replaces red screen of death (RSOD).
-  static void addDefaultErrorWidget(
-      {bool showStacktrace = true,
-      String title = "An application error has occurred",
-      String description =
-          "There was unexpected situation in application. Application has been "
-              "able to recover from error state.",
-      double maxWidthForSmallMode = 150}) {
+  static void addDefaultErrorWidget({
+    bool showStacktrace = true,
+    String title = "An application error has occurred",
+    String description =
+        "There was unexpected situation in application. Application has been "
+            "able to recover from error state.",
+    double maxWidthForSmallMode = 150,
+  }) {
     ErrorWidget.builder = (FlutterErrorDetails details) {
       return CatcherErrorWidget(
         details: details,
@@ -616,6 +726,7 @@ class Catcher with ReportModeAction {
     };
   }
 
+  ///Get platform type based on device.
   PlatformType _getPlatformType() {
     if (ApplicationProfileManager.isWeb()) {
       return PlatformType.web;
@@ -637,5 +748,38 @@ class Catcher with ReportModeAction {
     }
 
     return PlatformType.unknown;
+  }
+
+  ///Clean report ocucrences from the past.
+  void _cleanPastReportsOccurences() {
+    final int occurenceTimeout = _currentConfig.reportOccurrenceTimeout;
+    final DateTime nowDateTime = DateTime.now();
+    _reportsOcurrenceMap.removeWhere((key, value) {
+      final DateTime occurenceWithTimeout =
+          key.add(Duration(milliseconds: occurenceTimeout));
+      return nowDateTime.isAfter(occurenceWithTimeout);
+    });
+  }
+
+  ///Check whether reports occurence map contains given report.
+  bool _isReportInReportsOccurencesMap(Report report) {
+    if (report.error != null) {
+      return _reportsOcurrenceMap.containsValue(report.error.toString());
+    } else {
+      return false;
+    }
+  }
+
+  ///Add report in reports occurences map. Report will be added only when
+  ///error is not null and report occurence timeout is greater than 0.
+  void _addReportInReportsOccurencesMap(Report report) {
+    if (report.error != null && _currentConfig.reportOccurrenceTimeout > 0) {
+      _reportsOcurrenceMap[DateTime.now()] = report.error.toString();
+    }
+  }
+
+  ///Get current Catcher instance.
+  static Catcher getInstance() {
+    return _instance;
   }
 }
