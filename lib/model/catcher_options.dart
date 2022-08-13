@@ -10,7 +10,7 @@ import 'package:catcher/utils/catcher_logger.dart';
 typedef CustomParameterFn = Map<String, dynamic> Function();
 
 Map<String, dynamic> defaultCustFn() {
-  return Map();
+  return <String, dynamic>{};
 }
 
 class CatcherOptions {
